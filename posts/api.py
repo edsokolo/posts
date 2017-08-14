@@ -8,6 +8,15 @@ from . import decorators
 from posts import app
 from .database import session
 
+# JSON Schema describing the structure of a post
+post_schema = {
+    "properties": {
+        "title" : {"type" : "string"},
+        "body": {"type": "string"}
+    },
+    "required": ["title", "body"]
+}
+
 @app.route("/api/posts", methods=["GET"])
 @decorators.accept("application/json")
 def posts_get():
@@ -27,6 +36,33 @@ def posts_get():
     # Convert the posts to JSON and return a response
     data = json.dumps([post.as_dictionary() for post in posts])
     return Response(data, 200, mimetype="application/json")
+
+@app.route("/api/posts", methods=["POST"])
+@decorators.accept("application/json")
+@decorators.require("application/json")
+def posts_post():
+    """ Add a new post """
+    data = request.json
+
+    # Check that the JSON supplied is valid
+    # If not you return a 422 Unprocessable Entity
+    try:
+        validate(data, post_schema)
+    except ValidationError as error:
+        data = {"message": error.message}
+        return Response(json.dumps(data), 422, mimetype="application/json")
+
+    # Add the post to the database
+    post = models.Post(title=data["title"], body=data["body"])
+    session.add(post)
+    session.commit()
+
+    # Return a 201 Created, containing the post as JSON and with the
+    # Location header set to the location of the post
+    data = json.dumps(post.as_dictionary())
+    headers = {"Location": url_for("post_get", id=post.id)}
+    return Response(data, 201, headers=headers,
+                    mimetype="application/json")
 
 @app.route("/api/posts/<int:id>", methods=["GET"])
 @decorators.accept("application/json")
@@ -66,3 +102,33 @@ def post_delete_post(id):
     session.delete(post)
     session.commit()
     return Response(data, 200, mimetype="application/json")
+
+@app.route("/api/posts/<int:id>", methods=["PUT"])
+@decorators.accept("application/json")
+@decorators.require("application/json")
+def post_put_post(id):
+    """ Single post endpoint """
+    # Delete the post from the database
+    post = session.query(models.Post).get(id)
+    data = request.json
+
+    # Check that the JSON supplied is valid
+    # If not you return a 422 Unprocessable Entity
+    try:
+        validate(data, post_schema)
+    except ValidationError as error:
+        data = {"message": error.message}
+        return Response(json.dumps(data), 422, mimetype="application/json")
+
+    # Check whether the post exists
+    # If not return a 404 with a helpful message
+    if not post:
+        message = "Could not find post with id {}".format(id)
+        data = json.dumps({"message": message})
+        return Response(data, 404, mimetype="application/json")
+
+    # Return the post as JSON
+    post.title = data["title"]
+    post.body = data["body"]
+    session.commit()
+    return Response(data, 202, mimetype="application/json")
